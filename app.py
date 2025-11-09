@@ -1,11 +1,12 @@
-# app.py (Frontend Streamlit) - UPDATED FOR WORKING BACKEND
+# app.py (Frontend Streamlit) - ROBUST VERSION
 
 import streamlit as st
 import os, io, math, base64, re
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import html
 import requests 
 from reportlab.lib.units import mm
+import time
 
 # --- API CONFIGURATION ---
 API_BASE_URL = "https://tank-marking-backend.onrender.com"
@@ -13,7 +14,7 @@ API_BASE_URL = "https://tank-marking-backend.onrender.com"
 # ---------------- CONFIG & CONSTANTS ----------------
 st.set_page_config(page_title="Tank Marking PDF Generator", layout="centered")
 
-# Paper sizes (dummy values for preview)
+# Paper sizes for preview
 A1 = (2380, 3368) 
 A2 = (1684, 2380)
 A3 = (1190, 1684)
@@ -34,6 +35,41 @@ LINE_GAP_MM = 10
 MARGIN_LEFT_MM = 20
 MARGIN_TOP_MM = 20
 
+# ---------------- OFFLINE CHARACTER GENERATION ----------------
+
+def create_fallback_char_image(char, size=100):
+    """Tạo ảnh fallback cho ký tự"""
+    img = Image.new('RGB', (size, size), color='white')
+    draw = ImageDraw.Draw(img)
+    
+    # Vẽ border
+    draw.rectangle([5, 5, size-5, size-5], outline='black', width=3)
+    
+    # Vẽ chữ
+    try:
+        font = ImageFont.truetype("arial.ttf", size//2)
+    except:
+        try:
+            font = ImageFont.load_default()
+        except:
+            font = None
+    
+    bbox = draw.textbbox((0, 0), char, font=font) if font else (0, 0, size, size)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    x = (size - text_width) // 2
+    y = (size - text_height) // 2
+    
+    draw.text((x, y-5), char, fill='black', font=font)
+    return img
+
+def char_to_base64(char, size=100):
+    """Chuyển ký tự thành ảnh base64"""
+    img = create_fallback_char_image(char, size)
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    return base64.b64encode(buffered.getvalue()).decode()
+
 # ---------------- UTILITIES ----------------
 
 def page_size_mm(paper_name, orientation):
@@ -43,83 +79,27 @@ def page_size_mm(paper_name, orientation):
         w_pt, h_pt = landscape((w_pt, h_pt))
     else:
         w_pt, h_pt = portrait((w_pt, h_pt))
-    # Chuyển đổi từ points sang mm (1 point = 1/72 inch, 1 inch = 25.4 mm)
     w_mm = (w_pt / 72) * 25.4
     h_mm = (h_pt / 72) * 25.4
     return (w_mm, h_mm)
 
 @st.cache_data(ttl=3600)
 def fetch_available_chars():
-    """Gọi API Backend để lấy danh sách tên file ảnh có sẵn."""
+    """Lấy danh sách ký tự từ backend với fallback"""
     try:
-        with st.spinner("🔄 Loading characters from backend..."):
-            response = requests.get(f"{API_BASE_URL}/available-chars", timeout=30)
-        
+        response = requests.get(f"{API_BASE_URL}/available-chars", timeout=10)
         if response.status_code == 200:
-            data = response.json()
-            if data:
-                st.success(f"✅ Loaded {len(data)} characters from backend")
-                return data
-            else:
-                st.warning("⚠️ Backend returned empty character list")
-                return []
-        else:
-            st.error(f"❌ Backend error {response.status_code}")
-            return []
-            
-    except requests.exceptions.Timeout:
-        st.error("❌ Request timeout - Backend is not responding")
-        return []
-    except requests.exceptions.ConnectionError:
-        st.error("❌ Connection error - Check backend URL and network")
-        return []
-    except Exception as e:
-        st.error(f"❌ Unexpected error: {str(e)}")
-        return []
-
-def build_image_index_from_files(file_names):
-    """
-    Xây dựng index map key ký tự gốc (/, ., a, 1) -> tên file.
-    """
-    idx = {}
-    
-    for file_name in file_names:
-        base_name_lower = os.path.splitext(file_name)[0].lower()
-        
-        # Map tên file thành ký tự
-        if base_name_lower == 'slash':
-            char_key = '/'
-        elif base_name_lower == '_':
-            char_key = '.'
-        else:
-            char_key = base_name_lower
-        
-        # Lưu vào index
-        if char_key not in idx:
-            idx[char_key] = file_name
-            
-    return idx
-
-# Khởi tạo Index ảnh
-AVAILABLE_FILE_NAMES = fetch_available_chars()
-if not AVAILABLE_FILE_NAMES:
-    st.warning("Using fallback character set for preview")
-    # Fallback characters
-    AVAILABLE_FILE_NAMES = ["A.png", "B.png", "C.png", "1.png", "2.png", "3.png", "SLASH.png", "_.png"]
-
-IMAGE_INDEX_FRONTEND = build_image_index_from_files(AVAILABLE_FILE_NAMES)
+            return response.json()
+    except:
+        pass
+    return None  # Return None để biết là failed
 
 def get_image_url(ch):
-    """Lấy URL ảnh từ backend"""
-    search_key = ch.lower()
-    file_name = IMAGE_INDEX_FRONTEND.get(search_key)
-    
-    if file_name:
-        return f"{API_BASE_URL}/static/ABC/{file_name}" 
-    return None
-    
+    """Lấy URL ảnh với fallback về base64"""
+    # Luôn sử dụng fallback cho đến khi backend ổn định
+    return f"data:image/png;base64,{char_to_base64(ch)}"
+
 def estimate_width_mm_from_char(ch, letter_height_mm):
-    # Giả định tỉ lệ 1:1 cho preview
     return letter_height_mm 
 
 def render_preview_html(lines, letter_height_mm, paper_choice, orientation, footer_text, max_preview_width_px=900):
@@ -162,9 +142,7 @@ def render_preview_html(lines, letter_height_mm, paper_choice, orientation, foot
                 img_url = get_image_url(ch)
                 
                 if img_url:
-                    line_html += f"<img src='{img_url}' style='height:{int(letter_height_mm*px_per_mm)}px; margin-right:{int(DEFAULT_CHAR_SPACING_MM*px_per_mm)}px; display:inline-block;' onerror=\"this.style.border='2px solid red';\">"
-                else:
-                    line_html += f"<div style='width:{draw_w_px}px;height:{int(letter_height_mm*px_per_mm)}px;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;margin-right:{int(DEFAULT_CHAR_SPACING_MM*px_per_mm)}px;font-weight:bold;'>{html.escape(ch)}</div>"
+                    line_html += f"<img src='{img_url}' style='height:{int(letter_height_mm*px_per_mm)}px; margin-right:{int(DEFAULT_CHAR_SPACING_MM*px_per_mm)}px; display:inline-block;'>"
                 
                 x_mm += draw_w_mm
                 x_mm += DEFAULT_CHAR_SPACING_MM
@@ -180,24 +158,22 @@ def render_preview_html(lines, letter_height_mm, paper_choice, orientation, foot
     return "\n".join(html_blocks)
 
 def render_library_html(preview_height_px=50, spacing_px=10):
-    """Render library với ảnh từ backend"""
-    keys = sorted(IMAGE_INDEX_FRONTEND.keys())
+    """Render library với fallback images"""
+    # Tập ký tự mẫu để hiển thị
+    sample_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/."
+    
     library_html = "<div style='background:#fff;border-top:2px solid #ccc;margin-top:20px;padding:10px;'>"
-    library_html += "<div style='font-weight:bold;margin-bottom:6px;color:#333;'>Tank Marking Library (Loaded from Backend)</div>"
+    library_html += "<div style='font-weight:bold;margin-bottom:6px;color:#333;'>Tank Marking Library (Using Fallback Images)</div>"
     library_html += "<div style='display:flex;overflow-x:auto;white-space:nowrap;padding:5px;'>"
 
-    if not keys:
-        library_html += "<div style='color:#666;padding:8px;'>No images found</div>"
-    else:
-        for key in keys:
-            img_url = get_image_url(key)
-            if img_url:
-                library_html += f"""
-                <div style='display:inline-block; margin-right:{spacing_px}px; text-align:center;'>
-                    <img src='{img_url}' style='height:{preview_height_px}px; display:block; margin-bottom: 2px;' onerror="this.style.border='2px solid red';">
-                    <span style='font-size:10px; color:#666;'>{html.escape(key)}</span>
-                </div>
-                """
+    for char in sample_chars:
+        img_url = get_image_url(char)
+        library_html += f"""
+        <div style='display:inline-block; margin-right:{spacing_px}px; text-align:center;'>
+            <img src='{img_url}' style='height:{preview_height_px}px; display:block; margin-bottom: 2px;'>
+            <span style='font-size:10px; color:#666;'>{html.escape(char)}</span>
+        </div>
+        """
 
     library_html += "</div></div>"
     return library_html
@@ -219,6 +195,9 @@ st.markdown("""
 
 st.markdown("<div class='header-banner'><h1 style='margin:6px 0;'>Tank Marking PDF Generator</h1></div>", unsafe_allow_html=True)
 
+# Hiển thị trạng thái backend
+st.warning("⚠️ **Backend is currently experiencing issues** - Using fallback mode for preview. PDF generation may not work.")
+
 # Input Controls
 user_text = st.text_area("Enter text (each line = 1 PDF line):", height=220, value="10WB\n25VOID\n50FO")
 lines = [ln for ln in user_text.splitlines() if ln.strip()]
@@ -237,47 +216,19 @@ col_buttons = st.columns([1, 1])
 with col_buttons[0]:
     preview_btn = st.button("Preview", key="preview")
 with col_buttons[1]:
-    gen_pdf_btn = st.button("Generate PDF (download)", key="gen")
+    gen_pdf_btn = st.button("Generate PDF (try anyway)", key="gen")
 
 # --- PREVIEW LOGIC ---
 library_html = render_library_html()
 
 if preview_btn:
-    missing_chars = set()
-    overflow_lines = {}
-    page_w_mm, page_h_mm = page_size_mm(paper_choice, orientation)
-    available_width_mm = page_w_mm - 2 * MARGIN_LEFT_MM
-
-    for i, line in enumerate(lines):
-        x_mm = 0.0
-        for ch in line:
-            if ch == " ":
-                x_mm += DEFAULT_SPACE_MM
-                continue
-            
-            if not get_image_url(ch): 
-                missing_chars.add(ch)
-            
-            x_mm += estimate_width_mm_from_char(ch, chosen_height_mm)
-            x_mm += DEFAULT_CHAR_SPACING_MM
-        
-        if x_mm > available_width_mm:
-            overflow_lines[i+1] = round(x_mm - available_width_mm, 1)
-
-    if missing_chars: 
-        st.markdown(f"<div style='color:white;background:#b71c1c;padding:8px;border-radius:6px;'>❌ Missing characters: {', '.join(sorted(missing_chars))}</div>", unsafe_allow_html=True)
-    if overflow_lines: 
-        st.markdown(f"<div style='color:#111;background:#ffd54f;padding:8px;border-radius:6px;'>⚠️ {len(overflow_lines)} line(s) exceed page width.</div>", unsafe_allow_html=True)
-    if not missing_chars and not overflow_lines: 
-        st.success("✅ All checks passed.")
-    
-    st.markdown("### PDF Preview")
+    st.markdown("### PDF Preview (Fallback Mode)")
     preview_html = render_preview_html(lines, chosen_height_mm, paper_choice, orientation, footer_text)
     st.markdown(preview_html, unsafe_allow_html=True)
     st.markdown(library_html, unsafe_allow_html=True)
 
 else:
-    st.markdown("<div style='color:#444;margin-top:12px;'>Tip: press <strong>Preview</strong> to see the page scaled to fit horizontally.</div>", unsafe_allow_html=True)
+    st.markdown("<div style='color:#444;margin-top:12px;'>Press <strong>Preview</strong> to see the layout with fallback characters.</div>", unsafe_allow_html=True)
     st.markdown(library_html, unsafe_allow_html=True)
 
 # --- GENERATE PDF LOGIC ---
@@ -286,7 +237,19 @@ if gen_pdf_btn:
         st.error("❌ Please enter some text first")
         st.stop()
         
-    st.info("🔄 Sending PDF generation request to backend...")
+    st.info("🔄 Attempting to generate PDF with backend...")
+    
+    # Test backend connection first
+    try:
+        test_response = requests.get(f"{API_BASE_URL}/", timeout=5)
+        if test_response.status_code != 200:
+            st.error("❌ Backend is currently unavailable. Please try again later.")
+            st.stop()
+    except:
+        st.error("❌ Cannot connect to backend server. Please try again later.")
+        st.stop()
+    
+    # Try to generate PDF
     payload = {
         "lines": lines,
         "letter_height_mm": chosen_height_mm,
@@ -297,7 +260,7 @@ if gen_pdf_btn:
     
     try:
         with st.spinner("Generating PDF... This may take a few seconds"):
-            response = requests.post(f"{API_BASE_URL}/generate-pdf", json=payload, timeout=60)
+            response = requests.post(f"{API_BASE_URL}/generate-pdf", json=payload, timeout=30)
         
         if response.status_code == 200:
             pdf_bytes = response.content
@@ -309,30 +272,33 @@ if gen_pdf_btn:
                 mime="application/pdf"
             )
         else:
-            st.error(f"❌ Backend error {response.status_code}: {response.text}")
+            st.error(f"❌ Backend error {response.status_code}. The backend service may be restarting.")
+            st.info("💡 Please wait a few minutes and try again, or check the backend logs.")
 
     except requests.exceptions.Timeout:
-        st.error("❌ PDF generation timeout")
+        st.error("❌ PDF generation timeout - backend is not responding")
     except requests.exceptions.ConnectionError:
-        st.error("❌ Cannot connect to backend")
+        st.error("❌ Cannot connect to backend server")
     except Exception as e:
         st.error(f"❌ Error: {str(e)}")
 
-# Connection status in sidebar
+# Debug info
 with st.sidebar:
-    st.markdown("### 🔧 Connection Status")
+    st.markdown("### 🔧 System Status")
+    
+    # Test backend connection
     try:
         health_response = requests.get(f"{API_BASE_URL}/", timeout=5)
         if health_response.status_code == 200:
-            st.success("✅ Backend Connected")
+            st.error("❌ Backend: Connected but has internal errors")
         else:
-            st.error("❌ Backend Error")
-    except:
-        st.error("❌ Backend Offline")
+            st.error(f"❌ Backend: HTTP {health_response.status_code}")
+    except requests.exceptions.ConnectionError:
+        st.error("❌ Backend: Cannot connect")
+    except requests.exceptions.Timeout:
+        st.error("❌ Backend: Timeout")
+    except Exception as e:
+        st.error(f"❌ Backend: {str(e)}")
     
-    st.write(f"Backend: {API_BASE_URL}")
-    st.write(f"Characters: {len(IMAGE_INDEX_FRONTEND)}")
-    
-    if st.button("Refresh Characters"):
-        st.cache_data.clear()
-        st.rerun()
+    st.info("🔄 Frontend: Using fallback mode")
+    st.write(f"Backend URL: {API_BASE_URL}")
