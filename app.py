@@ -59,47 +59,49 @@ def fetch_available_chars():
         return []
 
 def build_image_index_from_files(file_names):
-    """Xây dựng index map key ký tự -> tên file (đã được xác thực tồn tại)."""
+    """
+    Xây dựng index map key ký tự gốc (/, ., a, 1) -> tên file.
+    Sử dụng tên file #.png và _.png để map về ký tự gốc / và .
+    """
     idx = {}
     
-    # Quy tắc map ngược: Tên file (trước phần mở rộng) -> Ký tự gốc (để tìm kiếm)
+    # Map từ tên file đã được mã hóa (base_name) sang ký tự gốc
     REVERSE_MAP = {"_": ".", "#": "/"}
     
     for file_name in file_names:
-        # Ví dụ: 'A.png' -> 'A', 'hash.png' -> 'hash'
-        base_name = os.path.splitext(file_name)[0]
-        key_lower = base_name.lower()
+        # Lấy tên file không có đuôi và chuyển sang chữ thường (ví dụ: 'A.png' -> 'a')
+        base_name_lower = os.path.splitext(file_name)[0].lower()
         
-        # Thử áp dụng quy tắc map ngược: hash -> / , underscore -> .
-        char_key = REVERSE_MAP.get(key_lower, key_lower) 
+        # Key để tra cứu trong input của người dùng
+        # Nếu là '_', key là '.', nếu là '#' key là '/'
+        char_key = REVERSE_MAP.get(base_name_lower, base_name_lower)
         
-        # Nếu không có map ngược (ví dụ: key_lower là 'a' hoặc '1'), thì char_key vẫn là 'a' hoặc '1'.
-        # Nếu có map ngược (ví dụ: key_lower là '#'), char_key là '/'.
-        
-        # Lưu vào index
+        # Lưu vào index: key (/, ., a, 1) -> file_name (A.png, 1.png, #.png, _.png)
         if char_key not in idx:
             idx[char_key] = file_name
+            
     return idx
-    
 
 # Khởi tạo Index ảnh dựa trên dữ liệu từ Backend
+# Dòng này phải chạy sau khi các hàm trên được định nghĩa
 AVAILABLE_FILE_NAMES = fetch_available_chars()
 IMAGE_INDEX_FRONTEND = build_image_index_from_files(AVAILABLE_FILE_NAMES)
 
+
 def get_image_url(ch):
     """Lấy tên file từ index và tạo URL Backend."""
-    # Khi tìm kiếm, chúng ta chuyển ký tự thành key (ví dụ: '.' -> '_')
-    special_map = {".": "_", "/": "#"}
     
-    # Ký tự tìm kiếm trong Index: Nếu là '.' thì tìm kiếm '.', nếu là 'a' thì tìm kiếm 'a'.
-    # CHÚ Ý: Index bây giờ lưu các ký tự gốc (như '/' hoặc '.')
+    # Ký tự tìm kiếm trong Index là ký tự gốc (chữ thường)
     search_key = ch.lower()
 
+    # Tra cứu file_name (ví dụ: '/' tìm ra '#.png')
     file_name = IMAGE_INDEX_FRONTEND.get(search_key)
     
     if file_name:
+        # Tạo URL từ tên file (ví dụ: .../static/ABC/#.png)
         return f"{API_BASE_URL}/static/ABC/{file_name}" 
     return None
+    
 
 def estimate_width_mm_from_char(ch, letter_height_mm):
     # Giả định tỉ lệ 1:1 cho tất cả ký tự trong Preview
