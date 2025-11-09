@@ -61,22 +61,25 @@ def fetch_available_chars():
 def build_image_index_from_files(file_names):
     """
     Xây dựng index map key ký tự gốc (/, ., a, 1) -> tên file.
-    Sử dụng tên file #.png và _.png để map về ký tự gốc / và .
+    Xử lý tên file 'slash.png' và tên file '_.png'.
     """
     idx = {}
     
-    # Map từ tên file đã được mã hóa (base_name) sang ký tự gốc
-    REVERSE_MAP = {"_": ".", "#": "/"}
+    # Map từ tên file đã được mã hóa (ví dụ: '_') sang ký tự gốc ('.')
+    REVERSE_MAP = {"_": "."}
     
     for file_name in file_names:
-        # Lấy tên file không có đuôi và chuyển sang chữ thường (ví dụ: 'A.png' -> 'a')
         base_name_lower = os.path.splitext(file_name)[0].lower()
         
-        # Key để tra cứu trong input của người dùng
-        # Nếu là '_', key là '.', nếu là '#' key là '/'
+        # 1. Key mặc định (cho a, b, c, 1, 2, 3, _)
         char_key = REVERSE_MAP.get(base_name_lower, base_name_lower)
         
-        # Lưu vào index: key (/, ., a, 1) -> file_name (A.png, 1.png, #.png, _.png)
+        # 2. Xử lý tên file mới cho ký tự '/'
+        if base_name_lower == 'slash':
+            char_key = '/'
+        
+        # Lưu vào index: key (/, ., a, 1) -> file_name (A.png, SLASH.png, _.png)
+        # char_key là '/', file_name là 'SLASH.png'
         if char_key not in idx:
             idx[char_key] = file_name
             
