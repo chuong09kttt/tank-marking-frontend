@@ -19,16 +19,21 @@ if not os.path.isdir(ICONS_FOLDER): os.makedirs(ICONS_FOLDER, exist_ok=True)
 
 # Dummy ReportLab imports (cho tính toán kích thước)
 try:
-    from reportlab.lib.pagesizes import A1, A2, A3, A4, landscape, portrait
-    PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
+    from reportlab.lib.pagesizes import A1, A2, A3, A4, landscape, portrait
+    PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
 except ImportError:
-    def A1(): return (2380, 3368) 
-    def A2(): return (1684, 2380)
-    def A3(): return (1190, 1684)
-    def A4(): return (841, 1190)
-    def landscape(size): return (size[1], size[0])
-    def portrait(size): return size
-    PAPER_SIZES_PT = {"A1": A1(), "A2": A2(), "A3": A3(), "A4": A4()}
+    # Đổi các hàm dummy thành các TUPLE cố định
+    A1 = (2380, 3368) 
+    A2 = (1684, 2380)
+    A3 = (1190, 1684)
+    A4 = (841, 1190) # <-- A4 bây giờ là một TUPLE, không phải HÀM
+    
+    def landscape(size): return (size[1], size[0])
+    def portrait(size): return size
+    
+    # Khởi tạo PAPER_SIZES_PT để lưu trữ các TUPLE này
+    PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
+    # CHÚ Ý: ĐÃ BỎ DẤU NGOẶC ĐƠN SAU A1, A2, A3, A4
 
 PAPER_SIZES = {"A1": None, "A2": None, "A3": None, "A4": None}
 DEFAULT_CHAR_SPACING_MM = 20
@@ -40,7 +45,7 @@ MARGIN_TOP_MM = 20
 # ---------------- UTILITIES (Load ảnh từ API) ----------------
 
 def page_size_mm(paper_name, orientation):
-    w_pt, h_pt = PAPER_SIZES_PT.get(paper_name, A4())
+    w_pt, h_pt = PAPER_SIZES_PT.get(paper_name, PAPER_SIZES_PT["A4"])
     if orientation == "Landscape":
         w_pt, h_pt = landscape((w_pt, h_pt))
     else:
