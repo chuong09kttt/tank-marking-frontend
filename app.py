@@ -8,7 +8,7 @@ import requests
 from reportlab.lib.units import mm # Giữ lại để tính toán pt/mm chính xác
 
 # --- API CONFIGURATION ---
-# !!! THAY THẾ BẰNG URL BACKEND CỦA BẠN !!!
+# !!! Đảm bảo URL này đã được xác nhận là đúng và đã hoạt động !!!
 API_BASE_URL = "https://tank-marking-backend.onrender.com" 
 
 # ---------------- CONFIG & CONSTANTS ----------------
@@ -47,7 +47,7 @@ def page_size_mm(paper_name, orientation):
         w_pt, h_pt = portrait((w_pt, h_pt))
     return (w_pt, h_pt)
 
-@st.cache_data
+@st.cache_data(ttl=3600) # Cache kết quả trong 1 giờ
 def fetch_available_chars():
     """Gọi API Backend để lấy danh sách tên file ảnh có sẵn."""
     try:
@@ -55,11 +55,11 @@ def fetch_available_chars():
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        st.error(f"❌ Could not fetch character list from Backend API. Status: {getattr(e.response, 'status_code', 'N/A')}")
+        st.error(f"❌ Could not fetch character list from Backend API. Please check backend logs. Status: {getattr(e.response, 'status_code', 'N/A')}")
         return []
 
 def build_image_index_from_files(file_names):
-    """Xây dựng index map key ký tự -> tên file."""
+    """Xây dựng index map key ký tự -> tên file (đã được xác thực tồn tại)."""
     idx = {}
     reverse_special_map = {"_": ".", "#": "/"}
     
@@ -72,9 +72,12 @@ def build_image_index_from_files(file_names):
         else:
             char_key = key
             
-        idx[char_key] = file_name
+        # Tránh ghi đè nếu có ký tự trùng lặp (ví dụ: 'A.png' và 'a.png')
+        if char_key not in idx:
+            idx[char_key] = file_name
     return idx
 
+# Khởi tạo Index ảnh dựa trên dữ liệu từ Backend
 AVAILABLE_FILE_NAMES = fetch_available_chars()
 IMAGE_INDEX_FRONTEND = build_image_index_from_files(AVAILABLE_FILE_NAMES)
 
@@ -106,19 +109,29 @@ def render_preview_html(lines, letter_height_mm, paper_choice, orientation, foot
     page_w_pt, page_h_pt = page_size_mm(paper_choice, orientation)
     page_w_mm = (page_w_pt / mm)
     
-    # ... (Logic HTML Scaling) ...
     scale = 1.0
-    # ... (Logic tính toán scale) ...
+    if page_w_mm * px_per_mm > max_preview_width_px:
+        scale = max_preview_width_px / (page_w_mm * px_per_mm)
+    if scale < 0.25: scale = 0.25
+    
+    margin_left_px = int(MARGIN_LEFT_MM * px_per_mm)
+    margin_top_px = int(MARGIN_TOP_MM * px_per_mm)
     
     html_blocks = []
-    # ... (HTML wrapper) ...
+    html_blocks.append(f"""
+    <div style="display:flex;justify-content:center;padding:12px;">
+      <div style="width:{int(page_w_mm * px_per_mm * scale) + 2*margin_left_px + 40}px; max-width:100%; height:70vh; overflow-y:auto; overflow-x:hidden; border-radius:6px;">
+        <div style="width:{int(page_w_mm * px_per_mm)}px; height:{int(page_h_mm * px_per_mm)}px; background:#fff;
+                     box-shadow:0 0 14px rgba(0,0,0,0.45); position:relative;
+                     padding:{margin_top_px}px {margin_left_px}px; overflow:hidden;
+                     transform:scale({scale}); transform-origin:top left; margin:0 auto;">
+    """)
     
     available_width_mm = page_w_mm - 2 * MARGIN_LEFT_MM
     
     for idx, line in enumerate(lines):
         line_html = f"<div style='display:flex;align-items:center;white-space:nowrap;margin-bottom:{int(LINE_GAP_MM*px_per_mm)}px;'>"
         
-        # Logic tính toán tràn lề và vẽ line
         x_mm = 0.0
         for ch in line:
             if ch == " ":
@@ -131,7 +144,7 @@ def render_preview_html(lines, letter_height_mm, paper_choice, orientation, foot
                 img_url = get_image_url(ch)
                 
                 if img_url:
-                    line_html += f"<img src='{img_url}' style='height:{int(letter_height_mm*px_per_mm)}px; margin-right:{int(DEFAULT_CHAR_SPACING_MM*px_per_mm)}px; display:inline-block;' onerror=\"this.style.background='#b71c1c';\">"
+                    line_html += f"<img src='{img_url}' style='height:{int(letter_height_mm*px_per_mm)}px; margin-right:{int(DEFAULT_CHAR_SPACING_MM*px_per_mm)}px; display:inline-block;' onerror=\"this.style.border='2px solid red';\">"
                 else:
                     line_html += f"<div style='width:{draw_w_px}px;height:{int(letter_height_mm*px_per_mm)}px;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;margin-right:{int(DEFAULT_CHAR_SPACING_MM*px_per_mm)}px;font-weight:bold;'>{html.escape(ch)}</div>"
                 
@@ -145,7 +158,7 @@ def render_preview_html(lines, letter_height_mm, paper_choice, orientation, foot
 
         html_blocks.append(line_html + f"<div style='width:100%;height:1px;background:#000;margin-top:{int(LINE_GAP_MM*px_per_mm)}px;'></div>")
 
-    # ... (HTML wrapper closing) ...
+    html_blocks.append("</div></div>")
     return "\n".join(html_blocks)
 
 def render_library_html(preview_height_px=50, spacing_px=10):
@@ -172,10 +185,9 @@ def render_library_html(preview_height_px=50, spacing_px=10):
     return library_html
 
 
-# ---------------- UI (Đã sửa lỗi NameError) ----------------
+# ---------------- UI ----------------
 
-# ... (CSS & Header) ...
-
+# Apply custom CSS & Header
 st.markdown("<div class='header-banner'><h1 style='margin:6px 0;'>Tank Marking PDF Generator</h1></div>", unsafe_allow_html=True)
 
 # Input Controls
@@ -215,6 +227,7 @@ if preview_btn:
                 x_mm += DEFAULT_SPACE_MM
                 continue
             
+            # Check if character is available in the filtered index
             if not get_image_url(ch): 
                 missing_chars.add(ch)
             
