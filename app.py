@@ -5,11 +5,29 @@ import os, io, math, base64, re
 from PIL import Image
 import html
 import requests 
-from reportlab.lib.units import mm # Giữ lại để tính toán pt/mm chính xác
+from reportlab.lib.units import mm
 
 # --- API CONFIGURATION ---
-# !!! Đảm bảo URL này đã được xác nhận là đúng và đã hoạt động !!!
-API_BASE_URL = "https://tank-marking-backend.onrender.com" 
+API_BASE_URL = "https://tank-marking-backend.onrender.com"
+
+# --- CONNECTION CHECK ---
+@st.cache_data(ttl=3600)
+def check_backend_connection():
+    """Kiểm tra kết nối đến backend"""
+    try:
+        response = requests.get(f"{API_BASE_URL}/", timeout=10)
+        if response.status_code == 200:
+            return True, "✅ Backend connection successful"
+        else:
+            return False, f"❌ Backend returned {response.status_code}"
+    except requests.exceptions.RequestException as e:
+        return False, f"❌ Cannot connect to backend: {str(e)}"
+
+# Hiển thị trạng thái
+conn_status, conn_message = check_backend_connection()
+if not conn_status:
+    st.error(conn_message)
+    st.info("💡 Please ensure: \n1. Backend is deployed \n2. URL is correct \n3. Backend service is running")
 
 # ---------------- CONFIG & CONSTANTS ----------------
 st.set_page_config(page_title="Tank Marking PDF Generator", layout="centered")
@@ -27,7 +45,7 @@ except ImportError:
     A1 = (2380, 3368) 
     A2 = (1684, 2380)
     A3 = (1190, 1684)
-    A4 = (841, 1190) # <-- A4 bây giờ là một TUPLE, không phải HÀM
+    A4 = (841, 1190)
     
     def landscape(size): 
         return (size[1], size[0])
@@ -37,7 +55,6 @@ except ImportError:
     
     # Khởi tạo PAPER_SIZES_PT để lưu trữ các TUPLE này
     PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
-    # CHÚ Ý: ĐÃ BỎ DẤU NGOẶC ĐƠN SAU A1, A2, A3, A4
 
 PAPER_SIZES = {"A1": None, "A2": None, "A3": None, "A4": None}
 DEFAULT_CHAR_SPACING_MM = 20
@@ -60,21 +77,38 @@ def page_size_mm(paper_name, orientation):
     h_mm = (h_pt / 72) * 25.4
     return (w_mm, h_mm)
 
-@st.cache_data(ttl=3600) # Cache kết quả trong 1 giờ
+@st.cache_data(ttl=3600)
 def fetch_available_chars():
     """Gọi API Backend để lấy danh sách tên file ảnh có sẵn."""
     try:
-        response = requests.get(f"{API_BASE_URL}/available-chars", timeout=10)
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"❌ Could not fetch character list from Backend API. Please check backend logs. Status: {getattr(e.response, 'status_code', 'N/A')}")
+        with st.spinner("🔄 Connecting to backend..."):
+            response = requests.get(f"{API_BASE_URL}/available-chars", timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                st.success(f"✅ Loaded {len(data)} characters from backend")
+            else:
+                st.warning("⚠️ Backend returned empty character list")
+            return data
+        else:
+            st.error(f"❌ Backend error {response.status_code}")
+            return []
+            
+    except requests.exceptions.Timeout:
+        st.error("❌ Request timeout (30s) - Backend is not responding")
+        return []
+    except requests.exceptions.ConnectionError:
+        st.error("❌ Connection error - Check backend URL and network")
+        return []
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {str(e)}")
         return []
 
 def build_image_index_from_files(file_names):
     """
     Xây dựng index map key ký tự gốc (/, ., a, 1) -> tên file.
-    Xử lý tên file 'slash.png' và tên file '_.png'.
+    Xử lý tên file 'SLASH.png' và tên file '_.png'.
     """
     idx = {}
     
@@ -87,19 +121,29 @@ def build_image_index_from_files(file_names):
         # 1. Key mặc định (cho a, b, c, 1, 2, 3, _)
         char_key = REVERSE_MAP.get(base_name_lower, base_name_lower)
         
-        # 2. Xử lý tên file mới cho ký tự '/'
+        # 2. Xử lý tên file cho ký tự '/' - hỗ trợ cả 'slash' và 'SLASH'
         if base_name_lower == 'slash':
             char_key = '/'
         
         # Lưu vào index: key (/, ., a, 1) -> file_name (A.png, SLASH.png, _.png)
-        # char_key là '/', file_name là 'SLASH.png'
         if char_key not in idx:
             idx[char_key] = file_name
             
     return idx
 
-# Khởi tạo Index ảnh dựa trên dữ liệu từ Backend
+# Khởi tạo Index ảnh với fallback
 AVAILABLE_FILE_NAMES = fetch_available_chars()
+if not AVAILABLE_FILE_NAMES:
+    st.warning("Using fallback character set for preview")
+    # Fallback characters bao gồm SLASH.png
+    AVAILABLE_FILE_NAMES = ["A.png", "B.png", "C.png", "D.png", "E.png", "F.png", 
+                           "G.png", "H.png", "I.png", "J.png", "K.png", "L.png", 
+                           "M.png", "N.png", "O.png", "P.png", "Q.png", "R.png", 
+                           "S.png", "T.png", "U.png", "V.png", "W.png", "X.png", 
+                           "Y.png", "Z.png", "0.png", "1.png", "2.png", "3.png", 
+                           "4.png", "5.png", "6.png", "7.png", "8.png", "9.png", 
+                           "SLASH.png", "_.png"]
+
 IMAGE_INDEX_FRONTEND = build_image_index_from_files(AVAILABLE_FILE_NAMES)
 
 def get_image_url(ch):
@@ -108,11 +152,11 @@ def get_image_url(ch):
     # Ký tự tìm kiếm trong Index là ký tự gốc (chữ thường)
     search_key = ch.lower()
 
-    # Tra cứu file_name (ví dụ: '/' tìm ra '#.png')
+    # Tra cứu file_name (ví dụ: '/' tìm ra 'SLASH.png')
     file_name = IMAGE_INDEX_FRONTEND.get(search_key)
     
     if file_name:
-        # Tạo URL từ tên file (ví dụ: .../static/ABC/#.png)
+        # Tạo URL từ tên file (ví dụ: .../static/ABC/SLASH.png)
         return f"{API_BASE_URL}/static/ABC/{file_name}" 
     return None
     
@@ -195,10 +239,9 @@ def render_library_html(preview_height_px=50, spacing_px=10):
     if not keys:
         library_html += "<div style='color:#666;padding:8px;'>No images found in the Backend ABC folder or connection failed.</div>"
     else:
-        for key in keys: # key ở đây là ký tự gốc (ví dụ: '/', '.')
+        for key in keys:
             img_url = get_image_url(key)
             
-            # Nếu img_url vẫn là None (rất khó xảy ra nếu key đến từ index), chúng ta phải dùng fallback
             if not img_url:
                 continue 
 
@@ -215,7 +258,26 @@ def render_library_html(preview_height_px=50, spacing_px=10):
 # ---------------- UI ----------------
 
 # Apply custom CSS & Header
+st.markdown("""
+<style>
+.header-banner {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 20px;
+    border-radius: 10px;
+    color: white;
+    text-align: center;
+    margin-bottom: 20px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown("<div class='header-banner'><h1 style='margin:6px 0;'>Tank Marking PDF Generator</h1></div>", unsafe_allow_html=True)
+
+# Hiển thị trạng thái kết nối
+if conn_status:
+    st.success(conn_message)
+else:
+    st.error(conn_message)
 
 # Input Controls
 user_text = st.text_area("Enter text (each line = 1 PDF line):", height=220, value="10WB\n25VOID\n50FO")
@@ -282,7 +344,11 @@ else:
 
 # --- GENERATE PDF BUTTON (Gọi API) ---
 if gen_pdf_btn:
-    st.info("Đang gửi yêu cầu tạo PDF tới Backend...")
+    if not lines:
+        st.error("❌ Please enter some text first")
+        st.stop()
+        
+    st.info("🔄 Đang gửi yêu cầu tạo PDF tới Backend...")
     payload = {
         "lines": lines,
         "letter_height_mm": chosen_height_mm,
@@ -291,13 +357,36 @@ if gen_pdf_btn:
         "footer_text": footer_text
     }
     try:
-        response = requests.post(f"{API_BASE_URL}/generate-pdf", json=payload, timeout=60)
-        response.raise_for_status() 
+        with st.spinner("Generating PDF... This may take a few seconds"):
+            response = requests.post(f"{API_BASE_URL}/generate-pdf", json=payload, timeout=60)
+        
+        if response.status_code == 200:
+            pdf_bytes = response.content
+            st.success("✅ PDF đã được tạo thành công bởi Backend. Tải xuống:")
+            st.download_button(
+                "⬇️ Tải xuống PDF", 
+                data=pdf_bytes, 
+                file_name="TankMarking.pdf", 
+                mime="application/pdf"
+            )
+        else:
+            st.error(f"❌ Backend returned error {response.status_code}: {response.text}")
 
-        pdf_bytes = response.content
-        st.success("✅ PDF đã được tạo thành công bởi Backend. Tải xuống:")
-        st.download_button("⬇️ Tải xuống PDF", data=pdf_bytes, file_name="TankMarking.pdf", mime="application/pdf")
-
+    except requests.exceptions.Timeout:
+        st.error("❌ PDF generation timeout - Backend took too long to respond")
+    except requests.exceptions.ConnectionError:
+        st.error("❌ Connection error - Cannot reach backend server")
     except requests.exceptions.RequestException as e:
         status_code = getattr(e.response, 'status_code', 'N/A')
-        st.error(f"❌ Lỗi kết nối hoặc HTTP ({status_code}): Kiểm tra URL Backend và logs.")
+        st.error(f"❌ Request failed ({status_code}): {str(e)}")
+    except Exception as e:
+        st.error(f"❌ Unexpected error: {str(e)}")
+
+# Debug info trong sidebar
+with st.sidebar:
+    st.markdown("### 🔧 Debug Info")
+    st.write(f"Backend URL: {API_BASE_URL}")
+    st.write(f"Loaded characters: {len(IMAGE_INDEX_FRONTEND)}")
+    if st.button("Refresh Character List"):
+        st.cache_data.clear()
+        st.rerun()
