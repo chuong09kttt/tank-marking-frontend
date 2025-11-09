@@ -61,21 +61,26 @@ def fetch_available_chars():
 def build_image_index_from_files(file_names):
     """Xây dựng index map key ký tự -> tên file (đã được xác thực tồn tại)."""
     idx = {}
-    reverse_special_map = {"_": ".", "#": "/"}
+    
+    # Quy tắc map ngược: Tên file (trước phần mở rộng) -> Ký tự gốc (để tìm kiếm)
+    REVERSE_MAP = {"_": ".", "#": "/"}
     
     for file_name in file_names:
-        key = os.path.splitext(file_name)[0].lower()
+        # Ví dụ: 'A.png' -> 'A', 'hash.png' -> 'hash'
+        base_name = os.path.splitext(file_name)[0]
+        key_lower = base_name.lower()
         
-        # Xử lý các ký tự đặc biệt
-        if key in reverse_special_map:
-            char_key = reverse_special_map[key]
-        else:
-            char_key = key
-            
-        # Tránh ghi đè nếu có ký tự trùng lặp (ví dụ: 'A.png' và 'a.png')
+        # Thử áp dụng quy tắc map ngược: hash -> / , underscore -> .
+        char_key = REVERSE_MAP.get(key_lower, key_lower) 
+        
+        # Nếu không có map ngược (ví dụ: key_lower là 'a' hoặc '1'), thì char_key vẫn là 'a' hoặc '1'.
+        # Nếu có map ngược (ví dụ: key_lower là '#'), char_key là '/'.
+        
+        # Lưu vào index
         if char_key not in idx:
             idx[char_key] = file_name
     return idx
+    
 
 # Khởi tạo Index ảnh dựa trên dữ liệu từ Backend
 AVAILABLE_FILE_NAMES = fetch_available_chars()
@@ -83,10 +88,14 @@ IMAGE_INDEX_FRONTEND = build_image_index_from_files(AVAILABLE_FILE_NAMES)
 
 def get_image_url(ch):
     """Lấy tên file từ index và tạo URL Backend."""
+    # Khi tìm kiếm, chúng ta chuyển ký tự thành key (ví dụ: '.' -> '_')
     special_map = {".": "_", "/": "#"}
-    key = special_map.get(ch, ch).lower()
     
-    file_name = IMAGE_INDEX_FRONTEND.get(key)
+    # Ký tự tìm kiếm trong Index: Nếu là '.' thì tìm kiếm '.', nếu là 'a' thì tìm kiếm 'a'.
+    # CHÚ Ý: Index bây giờ lưu các ký tự gốc (như '/' hoặc '.')
+    search_key = ch.lower()
+
+    file_name = IMAGE_INDEX_FRONTEND.get(search_key)
     
     if file_name:
         return f"{API_BASE_URL}/static/ABC/{file_name}" 
@@ -171,15 +180,21 @@ def render_library_html(preview_height_px=50, spacing_px=10):
     if not keys:
         library_html += "<div style='color:#666;padding:8px;'>No images found in the Backend ABC folder or connection failed.</div>"
     else:
-        for key in keys:
+        for key in keys: # key ở đây là ký tự gốc (ví dụ: '/', '.')
             img_url = get_image_url(key)
             
+            # Nếu img_url vẫn là None (rất khó xảy ra nếu key đến từ index), chúng ta phải dùng fallback
+            if not img_url:
+                continue 
+
             library_html += f"""
             <div style='display:inline-block; margin-right:{spacing_px}px; text-align:center;'>
                 <img src='{img_url}' style='height:{preview_height_px}px; display:block; margin-bottom: 2px;' onerror="this.style.border='2px solid red';">
                 <span style='font-size:10px; color:#666;'>{html.escape(key)}</span>
             </div>
             """
+
+    
 
     library_html += "</div></div>"
     return library_html
