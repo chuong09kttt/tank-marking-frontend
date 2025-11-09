@@ -15,24 +15,28 @@ API_BASE_URL = "https://tank-marking-backend.onrender.com"
 st.set_page_config(page_title="Tank Marking PDF Generator", layout="centered")
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 ICONS_FOLDER = os.path.join(ROOT_DIR, "icons") 
-if not os.path.isdir(ICONS_FOLDER): os.makedirs(ICONS_FOLDER, exist_ok=True)
+if not os.path.isdir(ICONS_FOLDER): 
+    os.makedirs(ICONS_FOLDER, exist_ok=True)
 
 # Dummy ReportLab imports (cho tính toán kích thước)
 try:
-    from reportlab.lib.pagesizes import A1, A2, A3, A4, landscape, portrait
-    PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
+    from reportlab.lib.pagesizes import A1, A2, A3, A4, landscape, portrait
+    PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
 except ImportError:
-    # Đổi các hàm dummy thành các TUPLE cố định
-    A1 = (2380, 3368) 
-    A2 = (1684, 2380)
-    A3 = (1190, 1684)
-    A4 = (841, 1190) # <-- A4 bây giờ là một TUPLE, không phải HÀM
-    
-    def landscape(size): return (size[1], size[0])
-    def portrait(size): return size
-    
+    # Đổi các hàm dummy thành các TUPLE cố định
+    A1 = (2380, 3368) 
+    A2 = (1684, 2380)
+    A3 = (1190, 1684)
+    A4 = (841, 1190) # <-- A4 bây giờ là một TUPLE, không phải HÀM
+    
+    def landscape(size): 
+        return (size[1], size[0])
+    
+    def portrait(size): 
+        return size
+    
     # Khởi tạo PAPER_SIZES_PT để lưu trữ các TUPLE này
-    PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
+    PAPER_SIZES_PT = {"A1": A1, "A2": A2, "A3": A3, "A4": A4}
     # CHÚ Ý: ĐÃ BỎ DẤU NGOẶC ĐƠN SAU A1, A2, A3, A4
 
 PAPER_SIZES = {"A1": None, "A2": None, "A3": None, "A4": None}
@@ -45,12 +49,16 @@ MARGIN_TOP_MM = 20
 # ---------------- UTILITIES (Load ảnh từ API) ----------------
 
 def page_size_mm(paper_name, orientation):
+    """Tính kích thước trang theo mm"""
     w_pt, h_pt = PAPER_SIZES_PT.get(paper_name, PAPER_SIZES_PT["A4"])
     if orientation == "Landscape":
         w_pt, h_pt = landscape((w_pt, h_pt))
     else:
         w_pt, h_pt = portrait((w_pt, h_pt))
-    return (w_pt, h_pt)
+    # Chuyển đổi từ points sang mm (1 point = 1/72 inch, 1 inch = 25.4 mm)
+    w_mm = (w_pt / 72) * 25.4
+    h_mm = (h_pt / 72) * 25.4
+    return (w_mm, h_mm)
 
 @st.cache_data(ttl=3600) # Cache kết quả trong 1 giờ
 def fetch_available_chars():
@@ -91,10 +99,8 @@ def build_image_index_from_files(file_names):
     return idx
 
 # Khởi tạo Index ảnh dựa trên dữ liệu từ Backend
-# Dòng này phải chạy sau khi các hàm trên được định nghĩa
 AVAILABLE_FILE_NAMES = fetch_available_chars()
 IMAGE_INDEX_FRONTEND = build_image_index_from_files(AVAILABLE_FILE_NAMES)
-
 
 def get_image_url(ch):
     """Lấy tên file từ index và tạo URL Backend."""
@@ -110,7 +116,6 @@ def get_image_url(ch):
         return f"{API_BASE_URL}/static/ABC/{file_name}" 
     return None
     
-
 def estimate_width_mm_from_char(ch, letter_height_mm):
     # Giả định tỉ lệ 1:1 cho tất cả ký tự trong Preview
     return letter_height_mm 
@@ -125,13 +130,13 @@ def _encode_file_to_base64(path):
 
 def render_preview_html(lines, letter_height_mm, paper_choice, orientation, footer_text, max_preview_width_px=900):
     px_per_mm = 2.5
-    page_w_pt, page_h_pt = page_size_mm(paper_choice, orientation)
-    page_w_mm = (page_w_pt / mm)
+    page_w_mm, page_h_mm = page_size_mm(paper_choice, orientation)
     
     scale = 1.0
     if page_w_mm * px_per_mm > max_preview_width_px:
         scale = max_preview_width_px / (page_w_mm * px_per_mm)
-    if scale < 0.25: scale = 0.25
+    if scale < 0.25: 
+        scale = 0.25
     
     margin_left_px = int(MARGIN_LEFT_MM * px_per_mm)
     margin_top_px = int(MARGIN_TOP_MM * px_per_mm)
@@ -204,11 +209,8 @@ def render_library_html(preview_height_px=50, spacing_px=10):
             </div>
             """
 
-    
-
     library_html += "</div></div>"
     return library_html
-
 
 # ---------------- UI ----------------
 
@@ -242,8 +244,8 @@ library_html = render_library_html()
 if preview_btn:
     missing_chars = set()
     overflow_lines = {}
-    page_w_pt, page_h_pt = page_size_mm(paper_choice, orientation)
-    available_width_mm = (page_w_pt / mm) - 2 * MARGIN_LEFT_MM
+    page_w_mm, page_h_mm = page_size_mm(paper_choice, orientation)
+    available_width_mm = page_w_mm - 2 * MARGIN_LEFT_MM
 
     for i, line in enumerate(lines):
         x_mm = 0.0
@@ -262,9 +264,12 @@ if preview_btn:
         if x_mm > available_width_mm:
             overflow_lines[i+1] = round(x_mm - available_width_mm, 1)
 
-    if missing_chars: st.markdown(f"<div style='color:white;background:#b71c1c;padding:8px;border-radius:6px;'>❌ Missing characters: {', '.join(sorted(missing_chars))}</div>", unsafe_allow_html=True)
-    if overflow_lines: st.markdown(f"<div style='color:#111;background:#ffd54f;padding:8px;border-radius:6px;'>⚠️ {len(overflow_lines)} line(s) exceed page width.</div>", unsafe_allow_html=True)
-    if not missing_chars and not overflow_lines: st.success("✅ All checks passed.")
+    if missing_chars: 
+        st.markdown(f"<div style='color:white;background:#b71c1c;padding:8px;border-radius:6px;'>❌ Missing characters: {', '.join(sorted(missing_chars))}</div>", unsafe_allow_html=True)
+    if overflow_lines: 
+        st.markdown(f"<div style='color:#111;background:#ffd54f;padding:8px;border-radius:6px;'>⚠️ {len(overflow_lines)} line(s) exceed page width.</div>", unsafe_allow_html=True)
+    if not missing_chars and not overflow_lines: 
+        st.success("✅ All checks passed.")
     
     st.markdown("### PDF Preview")
     preview_html = render_preview_html(lines, chosen_height_mm, paper_choice, orientation, footer_text, max_preview_width_px=900)
@@ -274,7 +279,6 @@ if preview_btn:
 else:
     st.markdown("<div style='color:#444;margin-top:12px;'>Tip: press <strong>Preview</strong> to see the page scaled to fit horizontally.</div>", unsafe_allow_html=True)
     st.markdown(library_html, unsafe_allow_html=True)
-
 
 # --- GENERATE PDF BUTTON (Gọi API) ---
 if gen_pdf_btn:
